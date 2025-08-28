@@ -143,7 +143,8 @@ export default function TreeMapD3({
       .attr("width", W)
       .attr("height", H + HEADER_H)
       .attr("fill", "#fff")
-      .on("click", () => zoomout());
+      .on("click", () => zoomout())
+      .lower(); // ✅ keep background under the nodes
 
     const { x, y } = stateRef.current;
 
@@ -185,14 +186,25 @@ export default function TreeMapD3({
             .append("g")
             .attr("class", "node")
             .call((g) => {
-              // click handlers (like Observable: root header or tiles)
-              g.filter(
-                (d: any) => (d === root ? d.parent : d.children) && drillEnabled
-              )
+              // Helper: only allow drill if the next level would have children
+              const canDrill = (d: any) =>
+                typeof getNextLevelTree === "function" &&
+                d?.data?.__raw &&
+                !!getNextLevelTree(d.data.__raw)?.children?.length;
+
+              // Make *all non-root tiles* clickable when canDrill is true
+              g.filter((d: any) => d !== root && drillEnabled && canDrill(d))
                 .attr("cursor", "pointer")
-                .on("click", (_evt, d: any) =>
-                  d === root ? zoomout() : zoomin(d)
-                );
+                .on("click", (_evt, d: any) => zoomin(d));
+
+              //   // click handlers (like Observable: root header or tiles)
+              //   g.filter(
+              //     (d: any) => (d === root ? d.parent : d.children) && drillEnabled
+              //   )
+              //     .attr("cursor", "pointer")
+              //     .on("click", (_evt, d: any) =>
+              //       d === root ? zoomout() : zoomin(d)
+              //     );
 
               g.append("title").text(
                 (d: any) => `${name(d)}\n${d3.format(",")(d.value ?? 0)}`
@@ -236,7 +248,7 @@ export default function TreeMapD3({
                   .join("tspan")
                   .attr("x", 3)
                   .attr("y", (_s, j, nodes) => {
-                    const isLast = j === (nodes as any[]).length - 1; // or: as ArrayLike<Element>
+                    const isLast = j === (nodes as any[]).length - 1;
                     const em = (isLast ? 0.3 : 0) + 1.1 + j * 0.9;
                     return `${em}em`;
                   })
@@ -252,7 +264,6 @@ export default function TreeMapD3({
                         ? "normal"
                         : null) as any
                   )
-
                   .text((s) => s);
               });
             }),
