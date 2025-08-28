@@ -1,22 +1,29 @@
 import React, { useMemo, useState, useCallback } from "react";
 import * as d3 from "d3";
-import type { TreeNode } from "./transform"; // from the code above
 
-type TreemapProps = {
-  data: TreeNode; // Output of toTree(...)
+// Your TreeNode from the transformer
+type TreeNode = {
+  name: string;
+  desc?: string;
+  level: 0 | 1 | 2;
+  value?: number;
+  children?: TreeNode[];
+};
+
+type Props = {
+  data: TreeNode;
   width?: number;
   height?: number;
-  measuredWidth?: number; // from your useSize hook if you prefer
+  measuredWidth?: number;
   measuredHeight?: number;
   formatValue?: (n: number) => string;
-  // Optional color override
-  colorAccessor?: (d: d3.HierarchyNode<TreeNode>) => string;
+  colorAccessor?: (d: d3.HierarchyRectangularNode<TreeNode>) => string;
 };
 
 const DEFAULT_WIDTH = 900;
 const DEFAULT_HEIGHT = 600;
 
-function fitLabel(label: string, w: number, charW = 7): string {
+function fitLabel(label: string, w: number, charW = 7) {
   const maxChars = Math.max(1, Math.floor((w - 10) / charW));
   if (label.length <= maxChars) return label;
   if (maxChars <= 3) return label.slice(0, Math.max(0, maxChars));
@@ -31,42 +38,46 @@ export default function ZoomableTreemap({
   measuredHeight,
   formatValue = d3.format(","),
   colorAccessor,
-}: TreemapProps) {
+}: Props) {
   const W = measuredWidth ?? width;
   const H = measuredHeight ?? height;
 
-  // Build the D3 hierarchy & layout
-  const root = useMemo(() => {
-    const h = d3
+  // ✅ Capture the return from the treemap layout:
+  const root = useMemo<d3.HierarchyRectangularNode<TreeNode>>(() => {
+    const hierarchy = d3
       .hierarchy<TreeNode>(data)
       .sum((d) => d.value ?? 0)
       .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
 
-    d3
+    const layout = d3
       .treemap<TreeNode>()
       .tile(d3.treemapResquarify)
       .size([W, H])
       .paddingInner(1)
-      .paddingTop((d) => (d.depth === 0 ? 0 : 20))(h);
+      .paddingTop((d) => (d.depth === 0 ? 0 : 20));
 
-    return h;
+    return layout(hierarchy); // <-- typed as HierarchyRectangularNode
   }, [data, W, H]);
 
-  // Colors: group by top-level (depth 1) cluster name
+  // ✅ Everything downstream keeps the rectangular type:
+  const [focus, setFocus] =
+    useState<d3.HierarchyRectangularNode<TreeNode>>(root);
+
   const color = useMemo(() => {
     if (colorAccessor)
-      return (d: d3.HierarchyNode<TreeNode>) => colorAccessor(d);
+      return (d: d3.HierarchyRectangularNode<TreeNode>) => colorAccessor(d);
     const parents = root.children?.map((d) => d.data.name) ?? [];
     const scale = d3
       .scaleOrdinal<string, string>()
       .domain(parents)
-      .range(d3.schemeTableau10);
-    const top1 = (d: d3.HierarchyNode<TreeNode>) =>
+      .range([...d3.schemeTableau10]); // spread to avoid readonly→mutable issues
+
+    const top1 = (d: d3.HierarchyRectangularNode<TreeNode>) =>
       d.ancestors().find((a) => a.depth === 1)?.data.name ?? d.data.name;
-    return (d: d3.HierarchyNode<TreeNode>) => scale(top1(d));
+
+    return (d: d3.HierarchyRectangularNode<TreeNode>) => scale(top1(d));
   }, [root, colorAccessor]);
 
-  const [focus, setFocus] = useState<d3.HierarchyNode<TreeNode>>(root);
   const viewCoords = useCallback(
     (node: d3.HierarchyRectangularNode<TreeNode>) => {
       const kx = W / (focus.x1 - focus.x0 || 1);
@@ -82,18 +93,21 @@ export default function ZoomableTreemap({
     [focus, W, H]
   );
 
-  const handleZoom = useCallback((n?: d3.HierarchyNode<TreeNode>) => {
-    if (n) setFocus(n);
-  }, []);
+  const handleZoom = useCallback(
+    (n?: d3.HierarchyRectangularNode<TreeNode>) => {
+      if (n) setFocus(n);
+    },
+    []
+  );
 
+  // ✅ descendants() are rectangular nodes too
   const nodes = root.descendants();
-  const isLeaf = (d: d3.HierarchyNode<TreeNode>) =>
+  const isLeaf = (d: d3.HierarchyRectangularNode<TreeNode>) =>
     !d.children || d.children.length === 0;
   const breadcrumb = focus.ancestors().reverse();
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      {/* Breadcrumbs */}
       <div
         style={{
           position: "absolute",
@@ -139,13 +153,10 @@ export default function ZoomableTreemap({
         />
         <g>
           {nodes.map((d) => {
-            // Only draw nodes inside the current focus branch
             const isDesc = focus === d || d.ancestors().includes(focus);
             if (!isDesc) return null;
 
-            const { x0, y0, w, h } = viewCoords(
-              d as d3.HierarchyRectangularNode<TreeNode>
-            );
+            const { x0, y0, w, h } = viewCoords(d);
             const showText = w > 70 && h > 24;
 
             return (
@@ -198,7 +209,6 @@ export default function ZoomableTreemap({
                     )}
                   </>
                 )}
-                {/* Optional: tooltip title */}
                 <title>
                   {d.data.name}
                   {d.data.desc ? ` — ${d.data.desc}` : ""}
