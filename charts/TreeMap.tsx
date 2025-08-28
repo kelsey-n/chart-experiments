@@ -235,21 +235,24 @@ export default function TreeMapD3({
                 tspan
                   .join("tspan")
                   .attr("x", 3)
-                  .attr(
-                    "y",
-                    (_s, j, nodes) =>
-                      `${(j === nodes.length - 1) * 0.3 + 1.1 + j * 0.9}em`
-                  )
+                  .attr("y", (_s, j, nodes) => {
+                    const isLast = j === (nodes as any[]).length - 1; // or: as ArrayLike<Element>
+                    const em = (isLast ? 0.3 : 0) + 1.1 + j * 0.9;
+                    return `${em}em`;
+                  })
                   .attr(
                     "fill-opacity",
                     (_s, j, nodes) =>
-                      (j === nodes.length - 1 ? 0.7 : null) as any
+                      (j === (nodes as any[]).length - 1 ? 0.7 : null) as any
                   )
                   .attr(
                     "font-weight",
                     (_s, j, nodes) =>
-                      (j === nodes.length - 1 ? "normal" : null) as any
+                      (j === (nodes as any[]).length - 1
+                        ? "normal"
+                        : null) as any
                   )
+
                   .text((s) => s);
               });
             }),
