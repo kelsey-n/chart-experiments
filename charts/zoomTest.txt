@@ -1,0 +1,127 @@
+Love it—now that rendering is pure React, the cleanest path is to animate the camera, not each tile.
+
+Here are two solid options (both zero D3 DOM magic):
+
+Option A (recommended): “Zoom-to-tile” camera tween with Framer Motion
+
+Animate a single <g> wrapper (the viewport) from the clicked tile’s rect to the full canvas. You get a buttery zoom that feels “correct” even though we reproject a new level.
+
+How it works
+
+When you drill in, grab the clicked tile’s {x,y,w,h} before you push the stack.
+
+Convert that rect into a transform {tx, ty, s} so that rect would fill the viewport.
+
+Wrap your tiles in a <motion.g> and set:
+
+initial={{ x: tx, y: ty, scale: s }}
+
+animate={{ x: 0, y: 0, scale: 1 }}
+
+On back/Esc, do the reverse using the rect you stored when you drilled in.
+
+Minimal patch (diff-style)
+
+Add Framer Motion:
+
+import { motion, AnimatePresence } from "framer-motion";
+
+Add helpers + types near the top:
+
+type Rect = { x: number; y: number; w: number; h: number };
+type StackItem = { raw: RawNode; rectFromParent?: Rect }; // store the rect we clicked
+
+function zoomFromRect(viewW: number, viewH: number, r: Rect) {
+const s = Math.min(viewW / r.w, viewH / r.h);
+// Translate so that the rect’s top-left moves to (0,0) _after_ scaling.
+const tx = -r.x _ s;
+const ty = -r.y _ s;
+return { x: tx, y: ty, scale: s };
+}
+
+Change the stack to store rects and add a trigger to remount animation:
+
+const [stack, setStack] = useState<StackItem[]>([{ raw: syntheticRoot }]);
+const focusRaw = stack[stack.length - 1].raw;
+const level = initialLevel - (stack.length - 1);
+
+// used to remount motion.g so initial->animate runs each transition
+const [animKey, setAnimKey] = useState(0);
+
+// where the next animation should start from (if any)
+const [pendingFrom, setPendingFrom] = useState<{ x: number; y: number; scale: number } | null>(null);
+
+When rendering tiles, capture the clicked rect and push it:
+
+{nodes.map((n, i) => {
+const x = n.x0, y = n.y0;
+const w = Math.max(0, n.x1 - n.x0);
+const h = Math.max(0, n.y1 - n.y0);
+/_ ... _/
+const drillable = canDrillToNextLevel(tn.\_\_raw);
+
+const handleDrill = () => {
+if (!drillable || !tn.**raw) return;
+// compute “from” transform using the rect we’re clicking
+const from = zoomFromRect(width, height, { x, y, w, h });
+setPendingFrom(from);
+setAnimKey(k => k + 1); // remount motion.g to use new initial
+// push node and remember the rect, so we can reverse on back
+setStack(s => [...s, { raw: tn.**raw!, rectFromParent: { x, y, w, h } }]);
+};
+
+return (
+<g /_ ... _/ onClick={(e) => { e.stopPropagation(); handleDrill(); }}
+onKeyDown={(e) => { if ((e.key==='Enter'||e.key===' ') ) { e.preventDefault(); handleDrill(); }}}>
+{/_ rect + label _/}
+</g>
+);
+})}
+
+Replace your <svg> tiles group with a motion wrapper:
+
+<svg className="treemap-svg" role="img" aria-label="Treemap">
+  <rect className="treemap-bg" x={0} y={0} width={width} height={height} />
+  <AnimatePresence initial={false} mode="popLayout">
+    <motion.g
+      key={animKey}
+      initial={pendingFrom ?? { x: 0, y: 0, scale: 1 }}
+      animate={{ x: 0, y: 0, scale: 1 }}
+      exit={{ opacity: 0 }}            // not strictly necessary
+      transition={{ type: "spring", stiffness: 180, damping: 22, mass: 0.9 }}
+    >
+      {/* ...render your nodes here exactly as before... */}
+      {nodes.map(/* unchanged except for handleDrill() above */)}
+      <g transform="translate(8,16)"><text className="treemap-crumb">{crumb}</text></g>
+    </motion.g>
+  </AnimatePresence>
+</svg>
+
+Hook up Back/Esc to animate out using the rect we stored on the stack top:
+
+const goUp = useCallback(() => {
+setStack(s => {
+if (s.length <= 1) return s;
+const leaving = s[s.length - 1]; // the subtree we’re inside of
+const parent = s[s.length - 2]; // we’re going back to this view
+// If we stored the parent-view rect of `leaving`, use it to set the “from” transform
+if (leaving.rectFromParent) {
+const from = zoomFromRect(width, height, leaving.rectFromParent);
+// When going UP, we want to animate from identity to this “shrunk” state,
+// so we set initial = {0,0,1} and animate TO from — but since framer animates
+// to `animate`, we can flip it by remounting with pendingFrom on the _next_ render.
+// Simpler: run the same pattern by setting pendingFrom to the reverse on next mount:
+setPendingFrom(from);
+setAnimKey(k => k + 1);
+}
+return s.slice(0, -1);
+});
+}, [width, height]);
+
+That’s it. The animation you’ll see:
+
+Drill in: tiles appear to “zoom” into the clicked rect.
+
+Back: tiles “zoom out” to the rect you last clicked at the parent level.
+
+Why this is easiest: no per-tile tween bookkeeping, no layout-id matching across totally different node sets. One transform, smooth vibe.
